@@ -4095,103 +4095,90 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
   
   uniform float uTime;
   uniform vec2 uMouse;
-  uniform vec2 uResolution;
   
   varying vec2 vUv;
   
-  // Simplex-like noise (cheaper than true simplex)
-  vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-  vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-  vec3 permute(vec3 x) { return mod289(((x * 34.0) + 1.0) * x); }
-
-  float snoise(vec2 v) {
-    const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-                       -0.577350269189626, 0.024390243902439);
-    vec2 i  = floor(v + dot(v, C.yy));
-    vec2 x0 = v -   i + dot(i, C.xx);
-    vec2 i1;
-    i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-    vec4 x12 = x0.xyxy + C.xxzz;
-    x12.xy -= i1;
-    i = mod289(i);
-    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
-    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-    m = m * m;
-    m = m * m;
-    vec3 x = 2.0 * fract(p * C.www) - 1.0;
-    vec3 h = abs(x) - 0.5;
-    vec3 ox = floor(x + 0.5);
-    vec3 a0 = x - ox;
-    m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
-    vec3 g;
-    g.x = a0.x * x0.x + h.x * x0.y;
-    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-    return 130.0 * dot(m, g);
+  // Smooth blob — radial gradient with soft falloff
+  float blob(vec2 uv, vec2 center, float radius) {
+    float d = length(uv - center) / radius;
+    // Super smooth falloff — quintic ease
+    return 1.0 - smoothstep(0.0, 1.0, d * d);
   }
   
-  // Fractal Brownian motion — layered noise for organic feel
-  float fbm(vec2 p) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < 5; i++) {
-      value += amplitude * snoise(p * frequency);
-      amplitude *= 0.5;
-      frequency *= 2.0;
-    }
-    return value;
-  }
-  
-  // Domain warping for that organic blob feel
-  float warpedNoise(vec2 p, float t) {
-    vec2 q = vec2(
-      fbm(p + vec2(0.0, 0.0) + 0.15 * t),
-      fbm(p + vec2(5.2, 1.3) + 0.12 * t)
+  // Slow sinusoidal movement for blob positions
+  vec2 drift(float seed, float t) {
+    return vec2(
+      sin(t * 0.3 + seed * 6.28) * 0.25,
+      cos(t * 0.25 + seed * 4.17) * 0.2
     );
-    vec2 r = vec2(
-      fbm(p + 4.0 * q + vec2(1.7, 9.2) + 0.10 * t),
-      fbm(p + 4.0 * q + vec2(8.3, 2.8) + 0.08 * t)
-    );
-    return fbm(p + 4.0 * r);
   }
   
   void main() {
     vec2 uv = vUv;
-    float t = uTime * 0.15; // Slow, meditative pace
+    float t = uTime * 0.08; // Very slow drift
     
-    // Mouse influence on noise domain
-    vec2 mouseOffset = uMouse * 0.3;
+    // Mouse gently shifts the blob field
+    vec2 mouseShift = uMouse * 0.06;
     
-    // Domain-warped noise creates the fluid mesh-gradient look
-    float n1 = warpedNoise(uv * 2.0 + mouseOffset, t);
-    float n2 = warpedNoise(uv * 1.5 - mouseOffset * 0.5, t * 1.3 + 3.0);
-    float n3 = warpedNoise(uv * 3.0 + vec2(mouseOffset.y, -mouseOffset.x), t * 0.7 + 7.0);
+    // ===== COLOR PALETTE =====
+    vec3 deepSpace     = vec3(0.03, 0.01, 0.08);   // Near-black base
+    vec3 deepIndigo    = vec3(0.08, 0.03, 0.22);   // Dark indigo
+    vec3 electricPurple = vec3(0.49, 0.36, 0.99);  // #7c5cfc
+    vec3 softCyan      = vec3(0.0, 0.72, 0.62);    // Muted teal
+    vec3 warmMagenta   = vec3(0.78, 0.18, 0.50);   // Deep pink
+    vec3 paleBlush     = vec3(0.88, 0.62, 0.55);   // Warm peach
+    vec3 lavender      = vec3(0.65, 0.50, 0.90);   // Soft lavender
     
-    // Color palette — Genie aesthetic
-    vec3 deepIndigo   = vec3(0.102, 0.039, 0.290); // #1a0a4a
-    vec3 electricPurple = vec3(0.486, 0.361, 0.988); // #7c5cfc
-    vec3 softCyan     = vec3(0.0, 0.831, 0.667);   // #00d4aa
-    vec3 warmMagenta  = vec3(0.878, 0.251, 0.627);  // #e040a0
-    vec3 paleBlush    = vec3(0.949, 0.710, 0.627);   // #f2b5a0
+    // ===== ANIMATED BLOB POSITIONS =====
+    // Each blob orbits slowly with its own phase
+    vec2 p1 = vec2(0.3, 0.7) + drift(0.0, t) + mouseShift;
+    vec2 p2 = vec2(0.7, 0.3) + drift(0.33, t) + mouseShift * 0.8;
+    vec2 p3 = vec2(0.5, 0.5) + drift(0.66, t) + mouseShift * 0.5;
+    vec2 p4 = vec2(0.2, 0.3) + drift(0.5, t) - mouseShift * 0.3;
+    vec2 p5 = vec2(0.8, 0.7) + drift(0.17, t) - mouseShift * 0.5;
+    vec2 p6 = vec2(0.4, 0.2) + drift(0.83, t) + mouseShift * 0.4;
     
-    // Mix colors based on noise values
-    vec3 color = deepIndigo;
-    color = mix(color, electricPurple, smoothstep(-0.2, 0.4, n1));
-    color = mix(color, softCyan, smoothstep(0.0, 0.6, n2) * 0.6);
-    color = mix(color, warmMagenta, smoothstep(0.1, 0.5, n3) * 0.4);
-    color = mix(color, paleBlush, smoothstep(0.3, 0.7, n1 * n2) * 0.25);
+    // Blob radii pulse gently
+    float r1 = 0.55 + sin(t * 1.5) * 0.08;
+    float r2 = 0.50 + sin(t * 1.2 + 1.0) * 0.07;
+    float r3 = 0.65 + sin(t * 1.0 + 2.0) * 0.10;
+    float r4 = 0.40 + sin(t * 1.8 + 3.0) * 0.06;
+    float r5 = 0.45 + sin(t * 1.3 + 4.0) * 0.08;
+    float r6 = 0.35 + sin(t * 1.6 + 5.0) * 0.05;
     
-    // Vignette — subtle darkening at edges
-    float vignette = 1.0 - length(uv - 0.5) * 0.8;
-    vignette = smoothstep(0.0, 1.0, vignette);
-    color *= vignette;
+    // ===== COMPUTE BLOB INFLUENCES =====
+    float b1 = blob(uv, p1, r1);
+    float b2 = blob(uv, p2, r2);
+    float b3 = blob(uv, p3, r3);
+    float b4 = blob(uv, p4, r4);
+    float b5 = blob(uv, p5, r5);
+    float b6 = blob(uv, p6, r6);
     
-    // Slight brightness variation for depth
-    color += 0.03 * snoise(uv * 10.0 + t * 2.0);
+    // ===== COLOR COMPOSITING =====
+    // Start from deep space, layer blobs on top
+    vec3 color = deepSpace;
+    
+    // Each blob adds its color with smooth falloff
+    color = mix(color, deepIndigo, b3 * 0.8);       // Large indigo base wash
+    color = mix(color, electricPurple, b1 * 0.7);    // Purple blob
+    color = mix(color, warmMagenta, b2 * 0.55);      // Magenta blob
+    color = mix(color, softCyan, b4 * 0.45);          // Cyan accent
+    color = mix(color, lavender, b5 * 0.35);          // Lavender accent
+    color = mix(color, paleBlush, b6 * 0.25);         // Peach highlight
+    
+    // ===== SUBTLE VIGNETTE =====
+    float vignette = 1.0 - length(uv - 0.5) * 0.5;
+    vignette = smoothstep(0.2, 1.0, vignette);
+    color *= mix(0.6, 1.0, vignette);
+    
+    // ===== VERY SUBTLE NOISE for organic texture =====
+    // Just a hint — prevents banding on gradients
+    float dither = fract(sin(dot(uv * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
+    color += (dither - 0.5) * 0.008;
     
     gl_FragColor = vec4(color, 1.0);
   }
-`;function Tg({mouse:n}){const e=de.useRef(null),t=de.useMemo(()=>({uTime:{value:0},uMouse:{value:new Ee(0,0)},uResolution:{value:new Ee(window.innerWidth,window.innerHeight)}}),[]);return Tp(i=>{t.uTime.value=i.clock.elapsedTime,t.uMouse.value.lerp(new Ee(n.x,n.y),.05)}),Me.jsxs("mesh",{ref:e,position:[0,0,-2],children:[Me.jsx("planeGeometry",{args:[10,10]}),Me.jsx("shaderMaterial",{vertexShader:EO,fragmentShader:TO,uniforms:t})]})}const AO=`
+`;function Tg({mouse:n}){const e=de.useRef(null),t=de.useMemo(()=>({uTime:{value:0},uMouse:{value:new Ee(0,0)}}),[]);return Tp(i=>{t.uTime.value=i.clock.elapsedTime,t.uMouse.value.lerp(new Ee(n.x,n.y),.03)}),Me.jsxs("mesh",{ref:e,position:[0,0,-2],children:[Me.jsx("planeGeometry",{args:[10,10]}),Me.jsx("shaderMaterial",{vertexShader:EO,fragmentShader:TO,uniforms:t})]})}const AO=`
   varying vec2 vUv;
   void main() {
     vUv = uv;
@@ -4289,25 +4276,28 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
     float centerGlow = exp(-dot(p, p) * 0.8);
     auroraColor += warmWhite * centerGlow * 0.3;
     
-    // ===== ALPHA: Pill shape with soft glow =====
+    // ===== ALPHA: Pill shape with pronounced glow =====
     
-    // Sharp pill interior
-    float pillAlpha = 1.0 - smoothstep(-0.02, 0.02, d);
+    // Sharp pill interior — fully opaque
+    float pillAlpha = 1.0 - smoothstep(-0.01, 0.01, d);
     
-    // Soft outer glow (the bloom halo)
-    float glowAlpha = exp(-max(d, 0.0) * 3.0) * 0.6;
+    // Inner glow — bright core
+    float innerGlow = exp(-max(d, 0.0) * 6.0) * 0.9;
     
-    // Secondary wider glow
-    float wideGlow = exp(-max(d, 0.0) * 1.2) * 0.15;
+    // Soft outer glow (the bloom halo) — wider and stronger
+    float glowAlpha = exp(-max(d, 0.0) * 2.0) * 0.7;
     
-    float totalAlpha = max(pillAlpha, max(glowAlpha, wideGlow));
+    // Wide atmospheric glow
+    float wideGlow = exp(-max(d, 0.0) * 0.8) * 0.25;
     
-    // Glow color is slightly different (more purple)
-    vec3 glowColor = mix(auroraColor, violet * 1.5, 0.3);
-    vec3 finalColor = mix(glowColor, auroraColor, pillAlpha);
+    float totalAlpha = max(pillAlpha, max(innerGlow, max(glowAlpha, wideGlow)));
     
-    // Boost brightness inside the pill for bloom to pick up
-    finalColor *= (1.0 + pillAlpha * 0.8);
+    // Glow color is slightly more purple outside
+    vec3 glowColor = mix(auroraColor, violet * 1.5, 0.4);
+    vec3 finalColor = mix(glowColor, auroraColor, max(pillAlpha, innerGlow));
+    
+    // Boost brightness inside the pill for bloom to pick up — HIGH
+    finalColor *= (1.2 + pillAlpha * 1.5 + innerGlow * 0.5);
     
     gl_FragColor = vec4(finalColor, totalAlpha);
   }
@@ -4517,7 +4507,7 @@ return orthographicDepthToViewZ(depth,cameraNear,cameraFar);
                   transparent 40%, 
                   transparent 60%, 
                   rgba(255,255,255,0.02) 100%
-                )`,pointerEvents:"none"}}),Me.jsx("div",{style:{width:40,height:40,margin:"0 auto 16px",borderRadius:12,background:"rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20},children:"💬"}),Me.jsx("p",{style:{fontSize:15,lineHeight:1.6,color:"rgba(255,255,255,0.45)",fontWeight:400,textShadow:"0 0 20px rgba(124,92,252,0.15)"},children:"As you talk with Genie, your wishes will appear here."}),Me.jsx("p",{style:{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:12},children:"Click to trigger warp effect"})]})})}),Me.jsx("div",{style:{pointerEvents:"auto"},children:Me.jsxs(Qu.div,{style:{display:"flex",alignItems:"center",gap:12,padding:"14px 20px",borderRadius:28,background:t?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.06)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",border:`1px solid ${t?"rgba(124,92,252,0.3)":"rgba(255,255,255,0.08)"}`,transition:"all 0.3s ease",boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)",marginBottom:80},children:[Me.jsx("span",{style:{fontSize:16,opacity:.5},children:"✨"}),Me.jsx("input",{type:"text",placeholder:"Describe a place or idea",style:{flex:1,background:"none",border:"none",outline:"none",color:"white",fontSize:15,fontFamily:"inherit"},onFocus:()=>i(!0),onBlur:()=>i(!1)})]})})]})}function c5(){const[n,e]=de.useState({x:0,y:0});return de.useEffect(()=>{const t=i=>{e({x:i.clientX/window.innerWidth*2-1,y:-(i.clientY/window.innerHeight)*2+1})};return window.addEventListener("mousemove",t),()=>window.removeEventListener("mousemove",t)},[]),n}function f5({mouse:n}){return Me.jsxs(Me.Fragment,{children:[Me.jsx(Tg,{mouse:n}),Me.jsx(Sb,{mouse:n}),Me.jsx(wx,{mouse:n,position:[0,.3,0]}),Me.jsx(WA,{mouse:n,position:[0,-1.6,0]}),Me.jsxs(zA,{children:[Me.jsx(HA,{intensity:.8,luminanceThreshold:.6,luminanceSmoothing:.4,mipmapBlur:!0}),Me.jsx(GA,{blendFunction:tn.NORMAL,offset:new Ee(8e-4,8e-4),radialModulation:!1,modulationOffset:0})]})]})}function h5(){const n=c5(),[e,t]=de.useState(!1);return Me.jsxs("div",{style:{width:"100vw",height:"100vh",position:"relative",overflow:"hidden"},children:[Me.jsx(NA,{camera:{position:[0,0,4],fov:45},gl:{antialias:!0,alpha:!1,powerPreference:"high-performance",toneMapping:hp,toneMappingExposure:1.2},style:{position:"absolute",inset:0},children:Me.jsx(f5,{mouse:n})}),Me.jsx(_b,{active:e,onComplete:()=>t(!1)}),Me.jsx(u5,{mouse:n,onGenieWarp:()=>t(!0)})]})}function d5({mouse:n}){const[e,t]=de.useState(!1),i=n.y*5,r=-n.x*5;return Me.jsxs(Qu.div,{style:{width:"100%",maxWidth:400,position:"relative",borderRadius:28,overflow:"hidden",cursor:"pointer",perspective:1e3},onClick:()=>t(!e),whileHover:{scale:1.02},whileTap:{scale:.98},transition:{type:"spring",stiffness:300,damping:20},children:[Me.jsx(Qu.div,{style:{transformStyle:"preserve-3d"},animate:{rotateX:i,rotateY:r},transition:{type:"spring",stiffness:150,damping:25},children:Me.jsxs("div",{style:{width:"100%",height:e?600:480,transition:"height 0.6s cubic-bezier(0.23, 1, 0.32, 1)",position:"relative",background:`
+                )`,pointerEvents:"none"}}),Me.jsx("div",{style:{width:40,height:40,margin:"0 auto 16px",borderRadius:12,background:"rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20},children:"💬"}),Me.jsx("p",{style:{fontSize:15,lineHeight:1.6,color:"rgba(255,255,255,0.45)",fontWeight:400,textShadow:"0 0 20px rgba(124,92,252,0.15)"},children:"As you talk with Genie, your wishes will appear here."}),Me.jsx("p",{style:{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:12},children:"Click to trigger warp effect"})]})})}),Me.jsx("div",{style:{pointerEvents:"auto"},children:Me.jsxs(Qu.div,{style:{display:"flex",alignItems:"center",gap:12,padding:"14px 20px",borderRadius:28,background:t?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.06)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",border:`1px solid ${t?"rgba(124,92,252,0.3)":"rgba(255,255,255,0.08)"}`,transition:"all 0.3s ease",boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)",marginBottom:80},children:[Me.jsx("span",{style:{fontSize:16,opacity:.5},children:"✨"}),Me.jsx("input",{type:"text",placeholder:"Describe a place or idea",style:{flex:1,background:"none",border:"none",outline:"none",color:"white",fontSize:15,fontFamily:"inherit"},onFocus:()=>i(!0),onBlur:()=>i(!1)})]})})]})}function c5(){const[n,e]=de.useState({x:0,y:0});return de.useEffect(()=>{const t=i=>{e({x:i.clientX/window.innerWidth*2-1,y:-(i.clientY/window.innerHeight)*2+1})};return window.addEventListener("mousemove",t),()=>window.removeEventListener("mousemove",t)},[]),n}function f5({mouse:n}){return Me.jsxs(Me.Fragment,{children:[Me.jsx(Tg,{mouse:n}),Me.jsx(Sb,{mouse:n}),Me.jsx(wx,{mouse:n,position:[0,.3,0]}),Me.jsx(WA,{mouse:n,position:[0,-1.4,.5]}),Me.jsxs(zA,{children:[Me.jsx(HA,{intensity:1.2,luminanceThreshold:.4,luminanceSmoothing:.3,mipmapBlur:!0}),Me.jsx(GA,{blendFunction:tn.NORMAL,offset:new Ee(8e-4,8e-4),radialModulation:!1,modulationOffset:0})]})]})}function h5(){const n=c5(),[e,t]=de.useState(!1);return Me.jsxs("div",{style:{width:"100vw",height:"100vh",position:"relative",overflow:"hidden"},children:[Me.jsx(NA,{camera:{position:[0,0,4],fov:45},gl:{antialias:!0,alpha:!1,powerPreference:"high-performance",toneMapping:hp,toneMappingExposure:1.2},style:{position:"absolute",inset:0},children:Me.jsx(f5,{mouse:n})}),Me.jsx(_b,{active:e,onComplete:()=>t(!1)}),Me.jsx(u5,{mouse:n,onGenieWarp:()=>t(!0)})]})}function d5({mouse:n}){const[e,t]=de.useState(!1),i=n.y*5,r=-n.x*5;return Me.jsxs(Qu.div,{style:{width:"100%",maxWidth:400,position:"relative",borderRadius:28,overflow:"hidden",cursor:"pointer",perspective:1e3},onClick:()=>t(!e),whileHover:{scale:1.02},whileTap:{scale:.98},transition:{type:"spring",stiffness:300,damping:20},children:[Me.jsx(Qu.div,{style:{transformStyle:"preserve-3d"},animate:{rotateX:i,rotateY:r},transition:{type:"spring",stiffness:150,damping:25},children:Me.jsxs("div",{style:{width:"100%",height:e?600:480,transition:"height 0.6s cubic-bezier(0.23, 1, 0.32, 1)",position:"relative",background:`
             radial-gradient(ellipse at 50% 30%, #e66420 0%, transparent 60%),
             radial-gradient(ellipse at 30% 60%, #d44020 0%, transparent 50%),
             radial-gradient(ellipse at 70% 40%, #f0a030 0%, transparent 50%),
